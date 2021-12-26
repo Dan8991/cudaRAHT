@@ -2,23 +2,6 @@ from numba import cuda, vectorize
 from time import time
 import numpy as np
 
-@cuda.reduce
-def sum_reduce(a, b):
-    return a+b
-
-@cuda.jit
-def poly(x):
-    tx = cuda.threadIdx.x
-    ty = cuda.blockIdx.x
-    bw = cuda.blockDim.x
-    pos = ty*bw + tx
-    if pos < x.size:
-        res = 0
-        for i in range(10):
-            res += x[pos] ** i
-        x[pos] = res
-    
-
 if __name__ == "__main__":
     a = np.random.rand(int(1e8)).astype(np.float64)
 
