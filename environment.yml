@@ -1,0 +1,8 @@
+name: cudaRAHT
+channels:
+dependencies:
+    - python=3.9
+    - numba
+    - numpy
+    - matplotlib
+    - tqdm
