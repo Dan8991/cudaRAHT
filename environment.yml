@@ -6,3 +6,6 @@ dependencies:
     - numpy
     - matplotlib
     - tqdm
+    - pip
+    - pip:
+        - "--editable=git+https://github.com/LTTM/PCutils.git@v0.3.0#egg=PCutils"
