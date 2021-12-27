@@ -45,6 +45,54 @@ def one_level_raht(block: np.ndarray) -> np.ndarray:
 
     return np.concatenate(final, axis=1)
 
+def raht(block: np.ndarray) -> np.ndarray:
+
+    '''
+    performs a slightly different raht transform
+    Parameters:
+        block: np array of size of nxnxnx4 to be transformed where the first channel represent
+               geometric  information while the remaining ones represent color
+    Returns:
+        the weight, and the hf and lf transformed coefficients 
+    '''
+    return _raht(block, axis = 0)
+
+
+def _raht(block, axis):
+
+    if block.shape == (1, 1, 1, 4):
+        return block[0, 0, 0, 0], block[0, 0, 0, 1:], None
+    weights = []
+    hf = []
+    lf = []
+    slices_val = [
+        (slice(block.shape[axis] // 2),),
+        (slice(block.shape[axis] // 2, block.shape[axis]),)
+    ]
+    for i in range(2):
+        wanted = (slice(None),) * axis +  slices_val[i]
+        sub_block = block[wanted] 
+        if np.any(sub_block):
+            results = _raht(sub_block, axis=(axis + 1) % 3)
+            if results[2]:
+                hf += results[2]
+            weights += [results[0]]
+            lf += [results[1]]
+        else:
+            weights += [0]
+            lf += [0]
+
+    if np.min(weights) == 0:
+        return np.max(weights), lf[np.argmax(weights, axis=0)], hf
+    else:
+        w1, w2 = weights
+        sw1 = w1 ** 0.5
+        sw2 = w2 ** 0.5
+        l1, l2 = lf
+        hf.append((- sw2 * l1 + sw1 * l2)/(sw1 + sw2))
+        new_lf = (sw1 * l1 + sw2 * l2)/(sw1 + sw2)
+        return w1 + w2, new_lf, hf
+
 def one_level_inverse_raht(
     coeffs: np.ndarray,
     geometry: np.ndarray
