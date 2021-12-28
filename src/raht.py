@@ -126,7 +126,7 @@ def np_parallelized_raht(block: np.ndarray) -> np.ndarray:
     return block[0, 0, 0, 0], block[0, 0, 0, 1:], final_hf
 
 
-def raht(block: np.ndarray) -> np.ndarray:
+def raht(block: np.ndarray, slightly_parallelized: bool) -> np.ndarray:
 
     '''
     performs a slightly different raht transform
@@ -136,10 +136,18 @@ def raht(block: np.ndarray) -> np.ndarray:
     Returns:
         the weight, and the hf and lf transformed coefficients 
     '''
-    return _raht(block, axis = 0)
+    return _raht(block, axis = 0, slightly_parallelized = slightly_parallelized)
 
+def is_empty(block):
+    x, y, z = block.shape[:3]
+    for i in range(x):
+        for j in range(y):
+            for k in range(z):
+                if block[i, j, k, 0]:
+                    return False
+    return True
 
-def _raht(block, axis):
+def _raht(block, axis, slightly_parallelized = True):
 
     if block.shape == (1, 1, 1, 4):
         return block[0, 0, 0, 0], block[0, 0, 0, 1:], None
@@ -153,7 +161,8 @@ def _raht(block, axis):
     for i in range(2):
         wanted = (slice(None),) * axis +  slices_val[i]
         sub_block = block[wanted] 
-        if np.any(sub_block):
+        condition = np.any(sub_block[..., 1]) if slightly_parallelized else not is_empty(sub_block)
+        if condition:
             results = _raht(sub_block, axis=(axis + 1) % 3)
             if results[2]:
                 hf += results[2]
