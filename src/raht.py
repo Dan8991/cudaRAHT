@@ -126,7 +126,7 @@ def np_parallelized_raht(block: np.ndarray) -> np.ndarray:
     return block[0, 0, 0, 0], block[0, 0, 0, 1:], final_hf
 
 
-def raht(block: np.ndarray, slightly_parallelized: bool) -> np.ndarray:
+def raht(block: np.ndarray, slightly_parallelized: bool = True) -> np.ndarray:
 
     '''
     performs a slightly different raht transform
