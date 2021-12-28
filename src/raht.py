@@ -1,5 +1,68 @@
 import numpy as np
 
+def flatten_cubes(vol, nb):
+    '''
+    flattens subcubes in cube of size (nbx, nby, nbz) i.e. values from the same
+    subcube are disposed one after the other
+    Parameters:
+        vol (np.ndarray): volume to flatten of size (nvxx, nvxy, nvxz, c) where
+                          c is the number of channels
+        nb (int): subcube size along the various dimensions, if int then it is supposed cubic
+    Return
+        vol (np.ndarray): flattened volume of size 
+                          (nvxx/nbx, nvxy/nby, nvxz/nbz, nbx * nby * nbz, c)
+    '''
+    nvxx, nvxy, nvxz = vol.shape[:3]
+
+    if isinstance(nb, tuple):
+        nbx, nby, nbz = nb
+    else:
+        nbx = nby = nbz = nb
+
+    nblx = nvxx // nbx
+    nbly = nvxy // nby
+    nblz = nvxz // nbz
+    # divides each of the dimensions in nbl parts of dimension nb
+    vol = vol.reshape(nblx, nbx, nbly, nby, nblz, nbz, -1)
+    # places all nearby the axis relative to the nbs and in the correct order
+    # so reshaping actually yields the correct vector
+    vol = vol.swapaxes(1, 4).swapaxes(3, 4).swapaxes(1, 2).reshape(
+        nblx, nbly, nblz, nbx * nby * nbz, -1
+    )
+    return vol
+
+# reshapes vol so it goes back to how it was before flatten_cubes
+
+
+def unflatten_cubes(vol, nb):
+    '''
+    Inverse operation of flatten cubes
+    Parameters:
+        vol (np.ndarray): volume to unflatten of size 
+                          (nblx, nbly, nblz, nbx * nby * nbz, c) where
+                          c is the number of channels
+        nb (int): subcube size along one dimension
+    Return
+        vol (np.ndarray): reshaped volume of size
+                          (nvxx, nvxy, nvxz, c)
+    '''
+
+    nblx, nbly, nblz = vol.shape[:3]
+
+    if isinstance(nb, tuple):
+        nbx, nby, nbz = nb
+    else:
+        nbx = nby = nbz = nb
+
+    nvxx = nblx * nbx
+    nvxy = nbly * nby
+    nvxz = nblz * nbz
+    vol = vol.reshape(nblx, nbly, nblz, nbx, nby, nbz, -1)
+    vol = vol.swapaxes(1, 2).swapaxes(3, 4).swapaxes(1, 4).reshape(
+                nvxx, nvxy, nvxz, -1
+    )
+    return vol
+
 def one_level_raht(block: np.ndarray) -> np.ndarray:
 
     '''
