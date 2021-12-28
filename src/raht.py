@@ -63,50 +63,68 @@ def unflatten_cubes(vol, nb):
     )
     return vol
 
-def one_level_raht(block: np.ndarray) -> np.ndarray:
+def one_level_raht(block: np.ndarray, axis: int) -> np.ndarray:
 
     '''
     performs a slightly different raht transform
     Parameters:
-        block: array of 2x2x2 blocks to be transformed
+        block: array of couples of lf coefficients and weights to be transformed
+        axis: axis along which raht should be computed
     Returns:
         the transformed 2x2x2 block
     '''
 
-    geom = block[..., :1]
-    lf = block[..., 1:] * geom
+    w = block[..., :1]
+    lf = block[..., 1:]
 
-    w = geom
     final = []
-    for i in range(3):
+    w_sqrt = np.sqrt(w) 
+    w_sqrt_inv = np.concatenate([
+        - w_sqrt[(slice(None),) * (axis + 1) + (slice(1, 2),)],
+        w_sqrt[(slice(None),) * (axis + 1) + (slice(0, 1),)],
+    ], axis = axis + 1)
+    w_coeffs = np.concatenate([w_sqrt, w_sqrt_inv], axis=-1)
+    w_coeffs = np.swapaxes(w_coeffs, axis+1, -2).swapaxes(-1, -2)
+    
+    w_div = np.maximum(np.sum(w_sqrt, axis = axis+1, keepdims=True), 1)
+    w = np.sum(w, axis = axis+1, keepdims=True)
 
-        w_sqrt = np.sqrt(w) 
-        w_sqrt_inv = np.concatenate([
-            - w_sqrt[(slice(None),) * (i + 1) + (slice(1, 2),)],
-            w_sqrt[(slice(None),) * (i + 1) + (slice(0, 1),)],
-        ], axis = i + 1)
-        w_coeffs = np.concatenate([w_sqrt, w_sqrt_inv], axis=-1)
-        w_coeffs = np.swapaxes(w_coeffs, i+1, -2).swapaxes(-1, -2)
-        
-        w_div = np.maximum(np.sum(w_sqrt, axis = i+1, keepdims=True), 1)
-        w = np.sum(w, axis = i+1, keepdims=True)
+    coeffs = w_coeffs @ np.swapaxes(lf, axis + 1, -2)
+    coeffs = np.swapaxes(coeffs, axis+1, -2) / w_div
+    hf = coeffs[(slice(None),)*(axis + 1) + (slice(1, 2),)]
+    lf = coeffs[(slice(None),)*(axis + 1) + (slice(0, 1),)]
 
-        coeffs = w_coeffs @ np.swapaxes(lf, i + 1, -2)
-        coeffs = np.swapaxes(coeffs, i+1, -2) / w_div
-        hf = coeffs[(slice(None),)*(i + 1) + (slice(1, 2),)]
-        lf = coeffs[(slice(None),)*(i + 1) + (slice(0, 1),)]
-        final = [hf.reshape((
-            block.shape[0],
-            -1,
-            3
-        ))] + final
-    final = [lf.reshape((
-        block.shape[0],
-        -1,
-        3
-    ))] + final
+    return np.concatenate([w, lf], axis = -1).reshape(-1, block.shape[-1]), hf
 
-    return np.concatenate(final, axis=1)
+def np_parallelized_raht(block: np.ndarray) -> np.ndarray:
+    '''
+    performs a slightly different raht transform
+    Parameters:
+        block: np array of size of nxnxnx4 to be transformed where the first channel represent
+               geometric  information while the remaining ones represent color
+    Returns:
+        the weight, and the hf and lf transformed coefficients 
+    '''
+    # repeat until the shape of the block becomes (1, 1, 1, c)
+    axis = 0
+    final_hf = []
+    channels = block.shape[-1]
+    while np.prod(block.shape) > block.shape[-1]:
+        nb = (1,) * axis + (2,) + (1,) * (2 - axis) 
+        flattened_block = flatten_cubes(block, nb)
+        new_lf_idxs = np.where(np.min(flattened_block[..., 0], axis=-1) > 0)
+        block = np.sum(flattened_block, axis=-2).astype(np.float32)
+        lf, hf = one_level_raht(
+            flattened_block[new_lf_idxs].reshape((-1, *nb, channels)).astype(np.float32),
+            axis=axis
+        )
+        block[new_lf_idxs] = lf
+        final_hf.append(hf)
+        axis = (axis + 1) % 3
+
+    final_hf = np.concatenate(final_hf, axis=0).reshape((-1, channels - 1))
+    return block[0, 0, 0, 0], block[0, 0, 0, 1:], final_hf
+
 
 def raht(block: np.ndarray) -> np.ndarray:
 
