@@ -160,8 +160,8 @@ def _raht(block, axis, slightly_parallelized = True):
     ]
     for i in range(2):
         wanted = (slice(None),) * axis +  slices_val[i]
-        sub_block = block[wanted] 
-        condition = np.any(sub_block[..., 1]) if slightly_parallelized else not is_empty(sub_block)
+        sub_block = block[wanted].astype(np.float32) 
+        condition = np.any(sub_block[..., 0]) if slightly_parallelized else not is_empty(sub_block)
         if condition:
             results = _raht(sub_block, axis=(axis + 1) % 3)
             if results[2]:
