@@ -1,7 +1,7 @@
 from numba import cuda, vectorize
 from time import time
 import numpy as np
-from raht import raht, flatten_cubes, unflatten_cubes, np_parallelized_raht
+from raht import raht, flatten_cubes, unflatten_cubes, parallelized_raht
 from PCutils import read_ply_files, voxelize_PC
 import matplotlib.pyplot as plt
 
@@ -25,13 +25,22 @@ if __name__ == "__main__":
 
     res[tuple(data[:, :3].T)] = np.concatenate([np.ones((len(data), 1)), data[:, 3:]], axis = 1)
     now = time()
-    weight, lf, hf = np_parallelized_raht(res)
+    weight, lf, hf = parallelized_raht(res)
     print("time elapsed:", time() - now)
     print(np.sum(res[..., 0]), weight, lf, hf.shape)
     now = time()
     weight, lf, hf = raht(res)
     print("time elapsed:", time() - now)
     hf = np.concatenate(hf, axis=0).reshape(-1, 3)
+    print(np.sum(res[..., 0]), weight, lf, hf.shape)
+    now = time()
+    weight, lf, hf = parallelized_raht(
+        res,
+        cuda=True,
+        threadsperblock=threadsperblock,
+        blockspergrid=blockspergrid
+    )
+    print("time elapsed:", time() - now)
     print(np.sum(res[..., 0]), weight, lf, hf.shape)
 
 

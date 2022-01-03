@@ -1,4 +1,5 @@
 import numpy as np
+from numba import cuda, vectorize
 
 def flatten_cubes(vol, nb):
     '''
@@ -96,7 +97,30 @@ def one_level_raht(block: np.ndarray, axis: int) -> np.ndarray:
 
     return np.concatenate([w, lf], axis = -1).reshape(-1, block.shape[-1]), hf
 
-def np_parallelized_raht(block: np.ndarray) -> np.ndarray:
+@cuda.jit
+def one_level_raht_gpu(block: np.ndarray, axis: int, lf: np.ndarray, hf: np.ndarray):
+    tx = cuda.threadIdx.x
+    ty = cuda.blockIdx.x
+    bw = cuda.blockDim.x
+    pos = tx + ty * bw
+    if pos < block.shape[0]:
+        w1 = block[pos, 0, 0]
+        w2 = block[pos, 1, 0]
+        sw1 = w1 ** 0.5
+        sw2 = w2 ** 0.5
+        for i in range(3):
+            l1 = block[pos, 0, i + 1]
+            l2 = block[pos, 1, i + 1]
+            hf[pos, i] = (- sw2 * l1 + sw1 * l2)/(sw1 + sw2)
+            lf[pos, i + 1] = (sw1 * l1 + sw2 * l2)/(sw1 + sw2)
+        lf[pos, 0] = w1 + w2
+
+def parallelized_raht(
+    block: np.ndarray,
+    cuda=False,
+    threadsperblock = 128,
+    blockspergrid = 128
+) -> np.ndarray:
     '''
     performs a slightly different raht transform
     Parameters:
@@ -115,10 +139,28 @@ def np_parallelized_raht(block: np.ndarray) -> np.ndarray:
         new_lf_idxs = np.where(np.min(flattened_block[..., 0], axis=-1) > 0)
         block = np.sum(flattened_block, axis=-2).astype(np.float32)
         if len(new_lf_idxs[0]) > 0:
-            lf, hf = one_level_raht(
-                flattened_block[new_lf_idxs].reshape((-1, *nb, channels)).astype(np.float32),
-                axis=axis
-            )
+
+            blocks_to_process = flattened_block[new_lf_idxs].reshape(
+                (-1, *nb, channels)
+            ).astype(np.float64)
+
+            if cuda:
+                lf = np.zeros((
+                    blocks_to_process.shape[0],
+                    blocks_to_process.shape[-1]
+                ), dtype=np.float64)
+                hf = np.zeros((len(blocks_to_process), 3), dtype=np.float64)
+                one_level_raht_gpu[blockspergrid, threadsperblock](
+                    blocks_to_process.reshape(-1, 2, 4),
+                    axis,
+                    lf,
+                    hf
+                )
+            else:
+                lf, hf = one_level_raht(
+                    blocks_to_process, 
+                    axis=axis
+                )
             block[new_lf_idxs] = lf
             final_hf.append(hf)
         axis = (axis + 1) % 3
