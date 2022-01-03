@@ -14,6 +14,12 @@ if __name__ == "__main__":
     max_blocks_per_grid = gpu.MAX_GRID_DIM_X
     print("Max threads per block:", max_threads_per_block)
     print("Max blocks per grid:", max_blocks_per_grid)
+    print("maxBlockDimX = %s" % str(gpu.MAX_BLOCK_DIM_X))
+    print("maxBlockDimY = %s" % str(gpu.MAX_BLOCK_DIM_Y))
+    print("maxBlockDimZ = %s" % str(gpu.MAX_BLOCK_DIM_Z))
+    print("maxGridDimX = %s" % str(gpu.MAX_GRID_DIM_X))
+    print("maxGridDimY = %s" % str(gpu.MAX_GRID_DIM_Y))
+    print("maxGridDimZ = %s" % str(gpu.MAX_GRID_DIM_Z))
     threadsperblock = 1024
     blockspergrid = min((a.size + (threadsperblock - 1)) // threadsperblock, max_blocks_per_grid)
     print("threads per block:", threadsperblock)
