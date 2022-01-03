@@ -114,12 +114,13 @@ def np_parallelized_raht(block: np.ndarray) -> np.ndarray:
         flattened_block = flatten_cubes(block, nb)
         new_lf_idxs = np.where(np.min(flattened_block[..., 0], axis=-1) > 0)
         block = np.sum(flattened_block, axis=-2).astype(np.float32)
-        lf, hf = one_level_raht(
-            flattened_block[new_lf_idxs].reshape((-1, *nb, channels)).astype(np.float32),
-            axis=axis
-        )
-        block[new_lf_idxs] = lf
-        final_hf.append(hf)
+        if len(new_lf_idxs[0]) > 0:
+            lf, hf = one_level_raht(
+                flattened_block[new_lf_idxs].reshape((-1, *nb, channels)).astype(np.float32),
+                axis=axis
+            )
+            block[new_lf_idxs] = lf
+            final_hf.append(hf)
         axis = (axis + 1) % 3
 
     final_hf = np.concatenate(final_hf, axis=0).reshape((-1, channels - 1))
@@ -136,7 +137,7 @@ def raht(block: np.ndarray, slightly_parallelized: bool = True) -> np.ndarray:
     Returns:
         the weight, and the hf and lf transformed coefficients 
     '''
-    return _raht(block, axis = 0, slightly_parallelized = slightly_parallelized)
+    return _raht(block, axis = 2, slightly_parallelized = slightly_parallelized)
 
 def is_empty(block):
     x, y, z = block.shape[:3]
@@ -163,7 +164,7 @@ def _raht(block, axis, slightly_parallelized = True):
         sub_block = block[wanted].astype(np.float32) 
         condition = np.any(sub_block[..., 0]) if slightly_parallelized else not is_empty(sub_block)
         if condition:
-            results = _raht(sub_block, axis=(axis + 1) % 3)
+            results = _raht(sub_block, axis=(axis - 1) % 3)
             if results[2]:
                 hf += results[2]
             weights += [results[0]]
