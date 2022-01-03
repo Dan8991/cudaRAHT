@@ -6,6 +6,7 @@ dependencies:
     - cudatoolkit
     - numpy
     - matplotlib
+    - conda-forge::line_profiler
     - tqdm
     - pip
     - pip:
