@@ -1,3 +1,4 @@
 dataset/*
 src/__pycache__
 src/pcutils
+src/*.lprof
