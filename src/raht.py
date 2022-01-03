@@ -115,11 +115,29 @@ def one_level_raht_gpu(block: np.ndarray, axis: int, lf: np.ndarray, hf: np.ndar
             lf[pos, i + 1] = (sw1 * l1 + sw2 * l2)/(sw1 + sw2)
         lf[pos, 0] = w1 + w2
 
+@cuda.jit
+def collapse_flattened_volume(vol, res):
+    '''
+    parallelizes the collapsing of the weights
+    the number of threads is equal to the number of samples in the x axis
+    the number of blocks is shape_y * shape_z
+    Parameters:
+        vol (np.ndarray): grid representation of the PC
+    '''
+    tx = cuda.threadIdx.x
+    ty = cuda.blockIdx.x
+    tz = cuda.blockIdx.y
+    for x in range(vol.shape[0]):
+        for i in range(vol.shape[-1]):
+            res[x, ty, tz, i] = vol[x, ty, tz, 0, i] + vol[x, ty, tz, 1, i]
+    
+
 def parallelized_raht(
     block: np.ndarray,
     cuda=False,
     threadsperblock = 128,
-    blockspergrid = 128
+    maxblockspergrid = 128,
+    stop_level = 10
 ) -> np.ndarray:
     '''
     performs a slightly different raht transform
@@ -133,23 +151,39 @@ def parallelized_raht(
     axis = 0
     final_hf = []
     channels = block.shape[-1]
+    level = 0
     while np.prod(block.shape) > block.shape[-1]:
         nb = (1,) * axis + (2,) + (1,) * (2 - axis) 
-        flattened_block = flatten_cubes(block, nb)
+        if cuda:
+            flattened_block = np.ascontiguousarray(flatten_cubes(block, nb))
+        else:
+            flattened_block = flatten_cubes(block, nb)
         new_lf_idxs = np.where(np.min(flattened_block[..., 0], axis=-1) > 0)
-        block = np.sum(flattened_block, axis=-2).astype(np.float32)
+        if cuda:
+            size_x, size_y, size_z = flattened_block.shape[:3]
+            block = np.zeros((size_x, size_y, size_z, flattened_block.shape[-1]))
+            collapse_flattened_volume[size_y, size_x](
+                flattened_block,
+                block
+            )
+        else:
+            block = np.sum(flattened_block, axis=-2).astype(np.float32)
         if len(new_lf_idxs[0]) > 0:
 
             blocks_to_process = flattened_block[new_lf_idxs].reshape(
                 (-1, *nb, channels)
-            ).astype(np.float64)
+            ).astype(np.float32)
 
-            if cuda:
+            if False and cuda and level < stop_level:
+                blockspergrid = min(
+                    (len(blocks_to_process) + (threadsperblock - 1)) // threadsperblock,
+                    maxblockspergrid
+                )
                 lf = np.zeros((
                     blocks_to_process.shape[0],
                     blocks_to_process.shape[-1]
-                ), dtype=np.float64)
-                hf = np.zeros((len(blocks_to_process), 3), dtype=np.float64)
+                ), dtype=np.float32)
+                hf = np.zeros((len(blocks_to_process), 3), dtype=np.float32)
                 one_level_raht_gpu[blockspergrid, threadsperblock](
                     blocks_to_process.reshape(-1, 2, 4),
                     axis,
@@ -162,8 +196,9 @@ def parallelized_raht(
                     axis=axis
                 )
             block[new_lf_idxs] = lf
-            final_hf.append(hf)
+            final_hf.append(hf.reshape(-1, 3))
         axis = (axis + 1) % 3
+        level += 1
 
     final_hf = np.concatenate(final_hf, axis=0).reshape((-1, channels - 1))
     return block[0, 0, 0, 0], block[0, 0, 0, 1:], final_hf

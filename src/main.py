@@ -44,7 +44,8 @@ if __name__ == "__main__":
         res,
         cuda=True,
         threadsperblock=threadsperblock,
-        blockspergrid=blockspergrid
+        maxblockspergrid=max_blocks_per_grid,
+        stop_level = 3 
     )
     print("time elapsed:", time() - now)
     print(np.sum(res[..., 0]), weight, lf, hf.shape)
