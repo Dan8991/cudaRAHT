@@ -116,20 +116,6 @@ def one_level_raht_gpu(block: np.ndarray, axis: int, lf: np.ndarray, hf: np.ndar
         lf[pos, 0] = w1 + w2
 
 @cuda.jit
-def collapse_flattened_volume(vol, res):
-    '''
-    parallelizes the collapsing of the weights
-    the number of threads is equal to the number of samples in the x axis
-    the number of blocks is shape_y * shape_z
-    Parameters:
-        vol (np.ndarray): grid representation of the PC
-    '''
-    tx = cuda.threadIdx.x
-    ty = cuda.blockIdx.x
-    tz = cuda.blockIdx.y
-    for x in range(vol.shape[0]):
-        for i in range(vol.shape[-1]):
-            res[x, ty, tz, i] = vol[x, ty, tz, 0, i] + vol[x, ty, tz, 1, i]
     
 
 def parallelized_raht(
