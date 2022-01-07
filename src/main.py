@@ -1,13 +1,14 @@
 from numba import cuda, vectorize
 from time import time
 import numpy as np
-from raht import raht, flatten_cubes, unflatten_cubes, parallelized_raht
+from raht import raht, flatten_cubes, unflatten_cubes, parallelized_raht, full_cuda_raht
 from PCutils import read_ply_files, voxelize_PC
 import matplotlib.pyplot as plt
+import pandas as pd
 
 if __name__ == "__main__":
     a = np.random.rand(int(1e8)).astype(np.float64)
-    grid_size = 512
+    grid_size = 1024
 
     gpu = cuda.get_current_device()
     max_threads_per_block = gpu.MAX_THREADS_PER_BLOCK
@@ -26,28 +27,30 @@ if __name__ == "__main__":
     print("blocks per grid:", blockspergrid)
 
     data = read_ply_files("../dataset/long.ply", only_geom=False)
-    data = voxelize_PC(data, n_voxels=grid_size).astype(np.uint8)
-    res = np.zeros((grid_size, grid_size, grid_size, 4), dtype=np.uint8)
-
-    res[tuple(data[:, :3].T)] = np.concatenate([np.ones((len(data), 1)), data[:, 3:]], axis = 1)
-    now = time()
-    weight, lf, hf = parallelized_raht(res)
-    print("time elapsed:", time() - now)
-    print(np.sum(res[..., 0]), weight, lf, hf.shape)
-    now = time()
-    weight, lf, hf = raht(res)
-    print("time elapsed:", time() - now)
-    hf = np.concatenate(hf, axis=0).reshape(-1, 3)
-    print(np.sum(res[..., 0]), weight, lf, hf.shape)
-    now = time()
-    weight, lf, hf = parallelized_raht(
-        res,
-        cuda=True,
-        threadsperblock=threadsperblock,
-        maxblockspergrid=max_blocks_per_grid,
-        stop_level = 3 
-    )
-    print("time elapsed:", time() - now)
-    print(np.sum(res[..., 0]), weight, lf, hf.shape)
-
+    data = voxelize_PC(data, n_voxels=grid_size)
+    #removing duplicate points by averaging the color
+    df = pd.DataFrame(data, columns=["x", "y", "z", "r", "g", "b"])
+    data = df.groupby(["x", "y", "z"], as_index=False).mean().to_numpy().astype(np.int32)
+    # now = time()
+    # weight, lf, hf = parallelized_raht(res)
+    # print("time elapsed:", time() - now)
+    # print(np.sum(res[..., 0]), weight, lf, hf.shape)
+    # now = time()
+    # weight, lf, hf = raht(res)
+    # print("time elapsed:", time() - now)
+    # hf = np.concatenate(hf, axis=0).reshape(-1, 3)
+    # print(np.sum(res[..., 0]), weight, lf, hf.shape)
+    # now = time()
+    # weight, lf, hf = parallelized_raht(
+        # data,
+        # grid_size = grid_size,
+        # cuda=False,
+        # threadsperblock=threadsperblock,
+        # maxblockspergrid=max_blocks_per_grid,
+        # stop_level = 3 
+    # )
+    # # print("time elapsed:", time() - now)
+    # print(len(data), weight, lf, hf.shape)
+    weight, lf, hf = full_cuda_raht(data, (grid_size, grid_size, grid_size, 4))
+    print(len(data), weight, lf)
 
