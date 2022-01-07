@@ -168,7 +168,7 @@ def initialize_empty_array(arr):
         arr[tx, ty, tz, i] = 0
 
 @cuda.jit
-def set_pc_in_array(arr, pc):
+def set_pc_in_array(arr, pc, posx, posy, posz):
     tx = cuda.threadIdx.x
     ty = cuda.blockIdx.x
     bw = cuda.blockDim.x
@@ -177,9 +177,13 @@ def set_pc_in_array(arr, pc):
     y = pc[pos, 1]
     z = pc[pos, 2]
     if pos < len(pc):
-        for i in range(arr.shape[-1] - 1):
-            arr[x, y, z, i + 1] = float(pc[pos, i + 3])
-        arr[x, y, z, 0] = 1.0
+        if (posx <= x < (posx + 512)) and (posy <= y < (posy + 512)) and (posz <= z < (posz + 512)):
+            x = x - posx
+            y = y - posy
+            z = z - posz
+            for i in range(arr.shape[-1] - 1):
+                arr[x, y, z, i + 1] = float(pc[pos, i + 3])
+            arr[x, y, z, 0] = 1.0
 
         
 
@@ -189,12 +193,51 @@ def full_cuda_raht(
     shape,
     max_num_iter = 3 
 ):
+    if shape[0] < 1024:
+        vol = partial_cuda_raht(pc, shape, max_num_iter)
+    else:
+        size = 1024 // (2 ** max_num_iter)
+        vol = np.zeros((size, size, size, shape[-1]))
+        dx = 512 // 2 ** max_num_iter 
+        for posx in range(2):
+            for posy in range(2):
+                for posz in range(2):
+                    vol_temp = partial_cuda_raht(
+                        pc,
+                        (512, 512, 512, 4),
+                        max_num_iter,
+                        posx * 512,
+                        posy * 512,
+                        posz * 512
+                    )
+                    x_start = posx * dx
+                    x_end = (posx + 1) * dx
+                    y_start = posy * dx
+                    y_end = (posy + 1) * dx
+                    z_start = posz * dx
+                    z_end = (posz + 1) * dx
+                    vol[x_start:x_end, y_start:y_end, z_start:z_end] = vol_temp
+
+    return compute_parallel_raht(vol) 
+
+def partial_cuda_raht( 
+    pc,
+    shape,
+    max_num_iter = 4,
+    posx=0,
+    posy=0,
+    posz=0
+):
+    # in this case the block is saved in memory right away
     # block = np.zeros(shape, dtype=np.uint8)
     # block[tuple(pc[:, :3].T)] = np.concatenate([np.ones((len(pc), 1)), pc[:, 3:]], axis = 1)
     # cuda_vol = cuda.to_device(block.astype(np.float32))
+    #here the block is created in the gpu memory
     cuda_vol = cuda.device_array(shape, np.float32)
     initialize_empty_array[(shape[0]//2, shape[0]), shape[0]*2](cuda_vol)
-    set_pc_in_array[(shape[0], shape[0]), shape[0]](cuda_vol, pc)
+    threadsperblock = 1024
+    blockspergrid = (len(pc) + (threadsperblock - 1)) // threadsperblock
+    set_pc_in_array[threadsperblock, blockspergrid](cuda_vol, pc, posx, posy, posz)
 
     axis = 0
     final_hf = []
@@ -214,8 +257,7 @@ def full_cuda_raht(
 
     dx = coord_scale[0]
     vol = cuda_vol.copy_to_host()
-    return compute_parallel_raht(vol[::dx, ::dx, ::dx]) 
-    
+    return vol[::dx, ::dx, ::dx]
 
 @profile
 def parallelized_raht(
