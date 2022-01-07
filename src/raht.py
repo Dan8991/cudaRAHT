@@ -115,16 +115,129 @@ def one_level_raht_gpu(block: np.ndarray, axis: int, lf: np.ndarray, hf: np.ndar
             lf[pos, i + 1] = (sw1 * l1 + sw2 * l2)/(sw1 + sw2)
         lf[pos, 0] = w1 + w2
 
+
 @cuda.jit
+def one_level_raht_full_gpu(
+    block: np.ndarray,
+    axis: int,
+    axis_mult: list
+):
+
+    dx = axis_mult[0]
+    dy = axis_mult[1]
+    dz = axis_mult[2]
+
+    tz = cuda.threadIdx.x * dz
+    tx = cuda.blockIdx.x * dx
+    ty = cuda.blockIdx.y * dy
+
+    tx2 = tx
+    ty2 = ty
+    tz2 = tz
+
+    if axis == 0:
+        tx2 = tx2 + dx // 2
+    elif axis == 1:
+        ty2 = ty2 + dy // 2
+    else:
+        tz2 = tz2 + dz // 2
+
+    w1 = block[tx, ty, tz, 0]
+    w2 = block[tx2, ty2, tz2, 0]
+    sw1 = w1 ** 0.5
+    sw2 = w2 ** 0.5
+    for i in range(3):
+        l1 = block[tx, ty, tz, i + 1]
+        l2 = block[tx2, ty2, tz2, i + 1]
+        if (w1 == 0) or (w2 == 0):
+            block[tx2, ty2, tz2, i + 1] = 0
+            block[tx, ty, tz, i + 1] = l1 + l2
+        else:
+            #hf components
+            block[tx2, ty2, tz2, i + 1] = (- sw2 * l1 + sw1 * l2)/(sw1 + sw2)
+            #lf components
+            block[tx, ty, tz, i + 1] = (sw1 * l1 + sw2 * l2)/(sw1 + sw2)
+    block[tx, ty, tz, 0] = w1 + w2
+
+@cuda.jit
+def initialize_empty_array(arr):
+    tz = cuda.threadIdx.x // 2
+    tx = cuda.blockIdx.x * 2 + (cuda.threadIdx.x % 2)
+    ty = cuda.blockIdx.y
+    for i in range(arr.shape[-1]):
+        arr[tx, ty, tz, i] = 0
+
+@cuda.jit
+def set_pc_in_array(arr, pc):
+    tx = cuda.threadIdx.x
+    ty = cuda.blockIdx.x
+    bw = cuda.blockDim.x
+    pos = tx + ty * bw
+    x = pc[pos, 0]
+    y = pc[pos, 1]
+    z = pc[pos, 2]
+    if pos < len(pc):
+        for i in range(arr.shape[-1] - 1):
+            arr[x, y, z, i + 1] = float(pc[pos, i + 3])
+        arr[x, y, z, 0] = 1.0
+
+        
+
+@profile
+def full_cuda_raht(
+    pc,
+    shape,
+    max_num_iter = 3 
+):
+    # block = np.zeros(shape, dtype=np.uint8)
+    # block[tuple(pc[:, :3].T)] = np.concatenate([np.ones((len(pc), 1)), pc[:, 3:]], axis = 1)
+    # cuda_vol = cuda.to_device(block.astype(np.float32))
+    cuda_vol = cuda.device_array(shape, np.float32)
+    initialize_empty_array[(shape[0]//2, shape[0]), shape[0]*2](cuda_vol)
+    set_pc_in_array[(shape[0], shape[0]), shape[0]](cuda_vol, pc)
+
+    axis = 0
+    final_hf = []
+    coord_scale = np.array([1, 1, 1])
+    block_size = len(cuda_vol)
+    max_num_iter = 3 * max_num_iter
+    i = 0
+    while np.product(coord_scale) != np.product(cuda_vol.shape[:3]) and i < max_num_iter:
+        i += 1
+        coord_scale[axis] *= 2
+        block_x = block_size // coord_scale[0]
+        block_y = block_size // coord_scale[1]
+        block_z = block_size // coord_scale[2]
+        one_level_raht_full_gpu[(block_x, block_y), block_z](cuda_vol, axis, coord_scale)
+        axis = (axis + 1) % 3
+        cuda.synchronize()
+
+    dx = coord_scale[0]
+    vol = cuda_vol.copy_to_host()
+    return compute_parallel_raht(vol[::dx, ::dx, ::dx]) 
     
 
+@profile
 def parallelized_raht(
-    block: np.ndarray,
+    data: np.ndarray,
+    grid_size: int,
     cuda=False,
     threadsperblock = 128,
     maxblockspergrid = 128,
     stop_level = 10
 ) -> np.ndarray:
+    # repeat until the shape of the block becomes (1, 1, 1, c)
+    block = np.zeros((grid_size, grid_size, grid_size, 4), dtype=np.uint8)
+    block[tuple(data[:, :3].T)] = np.concatenate([np.ones((len(data), 1)), data[:, 3:]], axis = 1)
+    return compute_parallel_raht(block, cuda, threadsperblock, maxblockspergrid, stop_level)
+
+def compute_parallel_raht(
+    block: np.ndarray,
+    cuda=False,
+    threadsperblock = 128,
+    maxblockspergrid = 128,
+    stop_level = 10
+):
     '''
     performs a slightly different raht transform
     Parameters:
@@ -133,7 +246,6 @@ def parallelized_raht(
     Returns:
         the weight, and the hf and lf transformed coefficients 
     '''
-    # repeat until the shape of the block becomes (1, 1, 1, c)
     axis = 0
     final_hf = []
     channels = block.shape[-1]
@@ -188,6 +300,7 @@ def parallelized_raht(
 
     final_hf = np.concatenate(final_hf, axis=0).reshape((-1, channels - 1))
     return block[0, 0, 0, 0], block[0, 0, 0, 1:], final_hf
+
 
 
 def raht(block: np.ndarray, slightly_parallelized: bool = True) -> np.ndarray:
