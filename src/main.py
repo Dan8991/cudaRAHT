@@ -5,10 +5,37 @@ from raht import raht, flatten_cubes, unflatten_cubes, parallelized_raht, full_c
 from PCutils import read_ply_files, voxelize_PC
 import matplotlib.pyplot as plt
 import pandas as pd
+import argparse
 
 if __name__ == "__main__":
-    a = np.random.rand(int(1e8)).astype(np.float64)
-    grid_size = 1024
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--stop_level",
+        type=int,
+        default=3,
+        help="number of levels of detail processed using gpu"
+    )
+    parser.add_argument(
+        "--resolution",
+        type=int,
+        default=512,
+        help="resolution of the grid"
+    )
+    parser.add_argument(
+        "--type",
+        type=str,
+        default="fullcuda",
+        help="fullcuda=all execution is carried out in cuda for the first stop_level levels \n"
+        "partialcuda=only meaningful operations are carried out in cuda\n"
+        "numpy=full numpy execution\n"
+        "sequential=the whole computation is carried out sequentially"
+        "partialsequential=most of the computation is carried out sequentially except for the operation to check if a region is empty"
+    )
+    FLAGS = parser.parse_args()
+    stop_level = FLAGS.stop_level
+    grid_size = FLAGS.resolution
+    execution_type = FLAGS.type
 
     gpu = cuda.get_current_device()
     max_threads_per_block = gpu.MAX_THREADS_PER_BLOCK
@@ -21,36 +48,28 @@ if __name__ == "__main__":
     print("maxGridDimX = %s" % str(gpu.MAX_GRID_DIM_X))
     print("maxGridDimY = %s" % str(gpu.MAX_GRID_DIM_Y))
     print("maxGridDimZ = %s" % str(gpu.MAX_GRID_DIM_Z))
-    threadsperblock = 1024
-    blockspergrid = min((a.size + (threadsperblock - 1)) // threadsperblock, max_blocks_per_grid)
-    print("threads per block:", threadsperblock)
-    print("blocks per grid:", blockspergrid)
 
     data = read_ply_files("../dataset/long.ply", only_geom=False)
     data = voxelize_PC(data, n_voxels=grid_size)
     #removing duplicate points by averaging the color
     df = pd.DataFrame(data, columns=["x", "y", "z", "r", "g", "b"])
     data = df.groupby(["x", "y", "z"], as_index=False).mean().to_numpy().astype(np.int32)
-    # now = time()
-    # weight, lf, hf = parallelized_raht(res)
-    # print("time elapsed:", time() - now)
-    # print(np.sum(res[..., 0]), weight, lf, hf.shape)
-    # now = time()
-    # weight, lf, hf = raht(res)
-    # print("time elapsed:", time() - now)
-    # hf = np.concatenate(hf, axis=0).reshape(-1, 3)
-    # print(np.sum(res[..., 0]), weight, lf, hf.shape)
-    # now = time()
-    # weight, lf, hf = parallelized_raht(
-        # data,
-        # grid_size = grid_size,
-        # cuda=False,
-        # threadsperblock=threadsperblock,
-        # maxblockspergrid=max_blocks_per_grid,
-        # stop_level = 3 
-    # )
-    # # print("time elapsed:", time() - now)
-    # print(len(data), weight, lf, hf.shape)
-    weight, lf, hf = full_cuda_raht(data, (grid_size, grid_size, grid_size, 4))
-    print(len(data), weight, lf)
+    if execution_type == "sequential" or execution_type == "partialsequential":
+        weight, lf, hf = raht(res, slightly_parallelized=execution_type == "partialsequential")
+        print("time elapsed:", time() - now)
+        hf = np.concatenate(hf, axis=0).reshape(-1, 3)
+        print(np.sum(res[..., 0]), weight, lf, hf.shape)
+    elif execution_type == "numpy" or execution_type == "partialcuda":
+        weight, lf, hf = parallelized_raht(
+            data,
+            grid_size = grid_size,
+            cuda = execution_type == "partialcuda",
+            threadsperblock=max_threads_per_block,
+            maxblockspergrid=max_blocks_per_grid,
+            stop_level = stop_level
+        )
+        print(len(data), weight, lf, hf.shape)
+    elif execution_type == "fullcuda":
+        weight, lf, hf = full_cuda_raht(data, (grid_size, grid_size, grid_size, 4))
+        print(len(data), weight, lf)
 
