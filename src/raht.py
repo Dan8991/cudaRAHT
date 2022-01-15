@@ -273,6 +273,22 @@ def parallelized_raht(
     block[tuple(data[:, :3].T)] = np.concatenate([np.ones((len(data), 1)), data[:, 3:]], axis = 1)
     return compute_parallel_raht(block, cuda, threadsperblock, maxblockspergrid, stop_level)
 
+@cuda.jit
+def collapse_flattened_volume(vol, res):
+    '''
+    parallelizes the collapsing of the weights
+    the number of threads is equal to the number of samples in the x axis
+    the number of blocks is shape_y * shape_z
+    Parameters:
+        vol (np.ndarray): grid representation of the PC
+    '''
+    tz = cuda.threadIdx.x
+    tx = cuda.blockIdx.x
+    ty = cuda.blockIdx.y
+    for i in range(vol.shape[-1]):
+        res[tx, ty, tz, i] = vol[tx, ty, tz, 0, i] + vol[tx, ty, tz, 1, i]
+
+@profile
 def compute_parallel_raht(
     block: np.ndarray,
     cuda=False,
@@ -302,7 +318,7 @@ def compute_parallel_raht(
         if cuda:
             size_x, size_y, size_z = flattened_block.shape[:3]
             block = np.zeros((size_x, size_y, size_z, flattened_block.shape[-1]))
-            collapse_flattened_volume[size_y, size_x](
+            collapse_flattened_volume[(size_x, size_y), size_z](
                 flattened_block,
                 block
             )
