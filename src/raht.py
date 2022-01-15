@@ -263,15 +263,11 @@ def partial_cuda_raht(
 def parallelized_raht(
     data: np.ndarray,
     grid_size: int,
-    cuda=False,
-    threadsperblock = 128,
-    maxblockspergrid = 128,
-    stop_level = 10
 ) -> np.ndarray:
     # repeat until the shape of the block becomes (1, 1, 1, c)
     block = np.zeros((grid_size, grid_size, grid_size, 4), dtype=np.uint8)
     block[tuple(data[:, :3].T)] = np.concatenate([np.ones((len(data), 1)), data[:, 3:]], axis = 1)
-    return compute_parallel_raht(block, cuda, threadsperblock, maxblockspergrid, stop_level)
+    return compute_parallel_raht(block)
 
 @cuda.jit
 def collapse_flattened_volume(vol, res):
@@ -290,11 +286,7 @@ def collapse_flattened_volume(vol, res):
 
 @profile
 def compute_parallel_raht(
-    block: np.ndarray,
-    cuda=False,
-    threadsperblock = 128,
-    maxblockspergrid = 128,
-    stop_level = 10
+    block: np.ndarray
 ):
     '''
     performs a slightly different raht transform
@@ -310,57 +302,30 @@ def compute_parallel_raht(
     level = 0
     while np.prod(block.shape) > block.shape[-1]:
         nb = (1,) * axis + (2,) + (1,) * (2 - axis) 
-        if cuda:
-            flattened_block = np.ascontiguousarray(flatten_cubes(block, nb))
-        else:
-            flattened_block = flatten_cubes(block, nb)
+        flattened_block = flatten_cubes(block, nb)
         new_lf_idxs = np.where(np.min(flattened_block[..., 0], axis=-1) > 0)
-        if cuda:
-            size_x, size_y, size_z = flattened_block.shape[:3]
-            block = np.zeros((size_x, size_y, size_z, flattened_block.shape[-1]))
-            collapse_flattened_volume[(size_x, size_y), size_z](
-                flattened_block,
-                block
-            )
-        else:
-            block = np.sum(flattened_block, axis=-2).astype(np.float32)
+        block = np.sum(flattened_block, axis=-2).astype(np.float32)
         if len(new_lf_idxs[0]) > 0:
 
             blocks_to_process = flattened_block[new_lf_idxs].reshape(
                 (-1, *nb, channels)
             ).astype(np.float32)
+            #needed to save some ram memory
 
-            if False and cuda and level < stop_level:
-                blockspergrid = min(
-                    (len(blocks_to_process) + (threadsperblock - 1)) // threadsperblock,
-                    maxblockspergrid
-                )
-                lf = np.zeros((
-                    blocks_to_process.shape[0],
-                    blocks_to_process.shape[-1]
-                ), dtype=np.float32)
-                hf = np.zeros((len(blocks_to_process), 3), dtype=np.float32)
-                one_level_raht_gpu[blockspergrid, threadsperblock](
-                    blocks_to_process.reshape(-1, 2, 4),
-                    axis,
-                    lf,
-                    hf
-                )
-            else:
-                lf, hf = one_level_raht(
-                    blocks_to_process, 
-                    axis=axis
-                )
+            lf, hf = one_level_raht(
+                blocks_to_process, 
+                axis=axis
+            )
             block[new_lf_idxs] = lf
             final_hf.append(hf.reshape(-1, 3))
         axis = (axis + 1) % 3
-        level += 1
 
     final_hf = np.concatenate(final_hf, axis=0).reshape((-1, channels - 1))
     return block[0, 0, 0, 0], block[0, 0, 0, 1:], final_hf
 
 
 
+@profile
 def raht(block: np.ndarray, slightly_parallelized: bool = True) -> np.ndarray:
 
     '''

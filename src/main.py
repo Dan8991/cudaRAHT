@@ -27,7 +27,6 @@ if __name__ == "__main__":
         type=str,
         default="fullcuda",
         help="fullcuda=all execution is carried out in cuda for the first stop_level levels \n"
-        "partialcuda=only meaningful operations are carried out in cuda\n"
         "numpy=full numpy execution\n"
         "sequential=the whole computation is carried out sequentially"
         "partialsequential=most of the computation is carried out sequentially except for the operation to check if a region is empty"
@@ -59,14 +58,10 @@ if __name__ == "__main__":
         print("time elapsed:", time() - now)
         hf = np.concatenate(hf, axis=0).reshape(-1, 3)
         print(np.sum(res[..., 0]), weight, lf, hf.shape)
-    elif execution_type == "numpy" or execution_type == "partialcuda":
+    elif execution_type == "numpy":
         weight, lf, hf = parallelized_raht(
             data,
-            grid_size = grid_size,
-            cuda = execution_type == "partialcuda",
-            threadsperblock=max_threads_per_block,
-            maxblockspergrid=max_blocks_per_grid,
-            stop_level = stop_level
+            grid_size = grid_size
         )
         print(len(data), weight, lf, hf.shape)
     elif execution_type == "fullcuda":
