@@ -3,7 +3,7 @@ import pickle
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
-n_tests=1
+n_tests=10
 modes = ["fullcuda", "numpy"]#, "partialsequential", "sequential"]
 mapping = {
     "fullcuda": 0,
@@ -33,4 +33,21 @@ for mode in modes:
 plt.legend()
 plt.show()
 
+times["fullcuda"] = []
+for stop_level in tqdm(range(1, 9)):
+    total_time = 0
+    for i in range(n_tests):
+        command = f"kernprof -l main.py --type=fullcuda"
+        command += f" --resolution={1024} --stop_level={stop_level} >/dev/null 2>&1"
+        os.system(command)
+        with open("main.py.lprof", "rb") as f:
+            data = pickle.load(f)
+
+        time_info = data.timings[list(data.timings.keys())[mapping["fullcuda"]]]
+        run_time = sum([x[2] for x in time_info])
+        total_time += run_time
+    times["fullcuda"].append(total_time/n_tests/10**6)
+
+plt.plot(range(1, 9), times["fullcuda"])
+plt.show()
 

@@ -65,6 +65,6 @@ if __name__ == "__main__":
         )
         print(len(data), weight, lf, hf.shape)
     elif execution_type == "fullcuda":
-        weight, lf, hf = full_cuda_raht(data, (grid_size, grid_size, grid_size, 4))
+        weight, lf, hf = full_cuda_raht(data, (grid_size, grid_size, grid_size, 4), max_num_iter=stop_level)
         print(len(data), weight, lf)
 
