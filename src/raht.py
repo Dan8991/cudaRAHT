@@ -152,13 +152,13 @@ def one_level_raht_full_gpu(
         if (w1 == 0) or (w2 == 0):
             block[tx2, ty2, tz2, i + 1] = 0
             block[tx, ty, tz, i + 1] = l1 + l2
-            block[tx2, ty2, tz2, 0] = -1
+            block[tx2, ty2, tz2, 0] = 0
         else:
             #hf components
             block[tx2, ty2, tz2, i + 1] = (- sw2 * l1 + sw1 * l2)/(sw1 + sw2)
             #lf components
             block[tx, ty, tz, i + 1] = (sw1 * l1 + sw2 * l2)/(sw1 + sw2)
-            block[tx2, ty2, tz2, 0] = 1
+            block[tx2, ty2, tz2, 0] = -1
     block[tx, ty, tz, 0] = w1 + w2
 
 @cuda.jit
@@ -188,16 +188,7 @@ def set_pc_in_array(arr, pc, posx, posy, posz):
             arr[x, y, z, 0] = 1.0
 
 def get_hf_components(block, n_level):
-    hf = []
-    for level in range(n_level):
-        for axis in range(2, -1, -1):
-            start = (0, ) * axis + (2**(n_level - level - 1),) + (0,) * (2 - axis) 
-            step = (2**(n_level - level),) * (axis + 1) + (2**(n_level - level - 1),) * (2 - axis) 
-            # print(start, step, block.shape)
-            hf_block = block[start[0]::step[0], start[1]::step[1], start[2]::step[2]]
-            hf.append(hf_block[np.where(hf_block[:, :, :, 0] == 1)][:, 1:])
-    hf = np.concatenate(hf, axis=0)
-    return hf
+    return block[np.where(block[..., 0] == -1)][:, 1:]
 
 @profile
 def full_cuda_raht(
