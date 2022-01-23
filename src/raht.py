@@ -152,11 +152,13 @@ def one_level_raht_full_gpu(
         if (w1 == 0) or (w2 == 0):
             block[tx2, ty2, tz2, i + 1] = 0
             block[tx, ty, tz, i + 1] = l1 + l2
+            block[tx2, ty2, tz2, 0] = -1
         else:
             #hf components
             block[tx2, ty2, tz2, i + 1] = (- sw2 * l1 + sw1 * l2)/(sw1 + sw2)
             #lf components
             block[tx, ty, tz, i + 1] = (sw1 * l1 + sw2 * l2)/(sw1 + sw2)
+            block[tx2, ty2, tz2, 0] = 1
     block[tx, ty, tz, 0] = w1 + w2
 
 @cuda.jit
@@ -185,7 +187,17 @@ def set_pc_in_array(arr, pc, posx, posy, posz):
                 arr[x, y, z, i + 1] = float(pc[pos, i + 3])
             arr[x, y, z, 0] = 1.0
 
-        
+def get_hf_components(block, n_level):
+    hf = []
+    for level in range(n_level):
+        for axis in range(2, -1, -1):
+            start = (0, ) * axis + (2**(n_level - level - 1),) + (0,) * (2 - axis) 
+            step = (2**(n_level - level),) * (axis + 1) + (2**(n_level - level - 1),) * (2 - axis) 
+            # print(start, step, block.shape)
+            hf_block = block[start[0]::step[0], start[1]::step[1], start[2]::step[2]]
+            hf.append(hf_block[np.where(hf_block[:, :, :, 0] == 1)][:, 1:])
+    hf = np.concatenate(hf, axis=0)
+    return hf
 
 @profile
 def full_cuda_raht(
@@ -193,12 +205,13 @@ def full_cuda_raht(
     shape,
     max_num_iter = 3 
 ):
+    hf = []
     if shape[0] < 1024:
         vol = partial_cuda_raht(pc, shape, max_num_iter)
     else:
         size = 1024 // (2 ** max_num_iter)
+        dx = size // 2
         vol = np.zeros((size, size, size, shape[-1]))
-        dx = 512 // 2 ** max_num_iter 
         for posx in range(2):
             for posy in range(2):
                 for posz in range(2):
@@ -216,9 +229,18 @@ def full_cuda_raht(
                     y_end = (posy + 1) * dx
                     z_start = posz * dx
                     z_end = (posz + 1) * dx
-                    vol[x_start:x_end, y_start:y_end, z_start:z_end] = vol_temp
+                    step = 2 ** max_num_iter
+                    hf.append(get_hf_components(vol_temp, max_num_iter))
+                    vol[x_start:x_end, y_start:y_end, z_start:z_end] = vol_temp[
+                        ::step,
+                        ::step,
+                        ::step
+                    ]
 
-    return compute_parallel_raht(vol) 
+    weight, lf, final_hf = compute_parallel_raht(vol)
+    hf.append(final_hf)
+
+    return weight, lf, np.concatenate(hf, axis=0)
 
 def partial_cuda_raht( 
     pc,
@@ -257,7 +279,7 @@ def partial_cuda_raht(
 
     dx = coord_scale[0]
     vol = cuda_vol.copy_to_host()
-    return vol[::dx, ::dx, ::dx]
+    return vol
 
 @profile
 def parallelized_raht(
