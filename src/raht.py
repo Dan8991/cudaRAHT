@@ -1,5 +1,5 @@
 import numpy as np
-from numba import cuda, vectorize
+from numba import cuda, vectorize, float32
 
 def flatten_cubes(vol, nb):
     '''
@@ -162,6 +162,102 @@ def one_level_raht_full_gpu(
     block[tx, ty, tz, 0] = w1 + w2
 
 @cuda.jit
+def one_level_raht_full_gpu_shared_memory(
+    block: np.ndarray,
+    n_levels: int,
+):
+
+    shared_arr = cuda.shared.array(shape=(8, 8, 32, 4), dtype=float32)
+    cuda.syncthreads()
+    curr_level = 1
+    dx = 2 
+    dy = 1
+    dz = 1
+
+    threadIdx = cuda.threadIdx.x
+    x_start = cuda.blockIdx.x * 8
+    y_start = cuda.blockIdx.y * 8
+    z_start = cuda.blockIdx.z * 32
+    tz = threadIdx % 32
+    ty = (threadIdx // 32) % 8
+    tx = ((threadIdx // 256) % 4) * 2
+
+    tx2 = tx + 1
+    ty2 = ty
+    tz2 = tz
+
+    w1 = block[x_start + tx, y_start + ty, z_start + tz, 0]
+    w2 = block[x_start + tx2, y_start + ty2, z_start + tz2, 0]
+    sw1 = w1 ** 0.5
+    sw2 = w2 ** 0.5
+    for i in range(3):
+        l1 = block[x_start + tx, y_start + ty, z_start + tz, i + 1]
+        l2 = block[x_start + tx2, y_start + ty2, z_start + tz2, i + 1]
+        if (w1 == 0) or (w2 == 0):
+            shared_arr[tx2, ty2, tz2, i + 1] = 0
+            shared_arr[tx, ty, tz, i + 1] = l1 + l2
+            shared_arr[tx2, ty2, tz2, 0] = 0
+        else:
+            #hf components
+            shared_arr[tx2, ty2, tz2, i + 1] = (- sw2 * l1 + sw1 * l2)/(sw1 + sw2)
+            #lf components
+            shared_arr[tx, ty, tz, i + 1] = (sw1 * l1 + sw2 * l2)/(sw1 + sw2)
+            shared_arr[tx2, ty2, tz2, 0] = -1
+    shared_arr[tx, ty, tz, 0] = w1 + w2
+    cuda.syncthreads()
+
+
+    for step in range(1, n_levels*3):
+        axis = step % 3
+        if axis == 0:
+            tx *= 2
+            dx *= 2
+            tx2 = tx + dx // 2
+            ty2 = ty
+            tz2 = tz 
+        elif axis == 1:
+            ty *= 2
+            dy *= 2
+            ty2 = ty + dy // 2
+            tx2 = tx
+            tz2 = tz 
+        else:
+            tz *= 2
+            dz *= 2
+            tz2 = tz + dz // 2
+            tx2 = tx
+            ty2 = ty 
+
+        if tx < 8 and ty < 8 and tz < 32:
+            w1 = shared_arr[tx, ty, tz, 0]
+            w2 = shared_arr[tx2, ty2, tz2, 0]
+            sw1 = w1 ** 0.5
+            sw2 = w2 ** 0.5
+            for i in range(3):
+                l1 = shared_arr[tx, ty, tz, i + 1]
+                l2 = shared_arr[tx2, ty2, tz2, i + 1]
+                if (w1 == 0) or (w2 == 0):
+                    shared_arr[tx2, ty2, tz2, i + 1] = 0
+                    shared_arr[tx, ty, tz, i + 1] = l1 + l2
+                    shared_arr[tx2, ty2, tz2, 0] = 0
+                else:
+                    #hf components
+                    shared_arr[tx2, ty2, tz2, i + 1] = (- sw2 * l1 + sw1 * l2)/(sw1 + sw2)
+                    #lf components
+                    shared_arr[tx, ty, tz, i + 1] = (sw1 * l1 + sw2 * l2)/(sw1 + sw2)
+                    shared_arr[tx2, ty2, tz2, 0] = -1
+            shared_arr[tx, ty, tz, 0] = w1 + w2
+        cuda.syncthreads()
+
+    tz = threadIdx % 32
+    ty = (threadIdx // 32) % 8
+    tx = ((threadIdx // 256) % 4) * 2
+    for i in range(2):
+        for c in range(4):
+            block[x_start+tx+i, y_start+ty, z_start+tz, c] = shared_arr[tx + i, ty, tz, c]
+    cuda.syncthreads()
+
+@cuda.jit
 def initialize_empty_array(arr):
     tz = cuda.threadIdx.x // 2
     tx = cuda.blockIdx.x * 2 + (cuda.threadIdx.x % 2)
@@ -190,15 +286,16 @@ def set_pc_in_array(arr, pc, posx, posy, posz):
 def get_hf_components(block, n_level):
     return block[np.where(block[..., 0] == -1)][:, 1:]
 
-@profile
+# @profile
 def full_cuda_raht(
     pc,
     shape,
-    max_num_iter = 3 
+    max_num_iter = 3,
+    shared_memory = True
 ):
     hf = []
     if shape[0] < 1024:
-        vol = partial_cuda_raht(pc, shape, max_num_iter)
+        vol = partial_cuda_raht(pc, shape, max_num_iter, shared_memory=shared_memory)
     else:
         size = 1024 // (2 ** max_num_iter)
         dx = size // 2
@@ -212,7 +309,8 @@ def full_cuda_raht(
                         max_num_iter,
                         posx * 512,
                         posy * 512,
-                        posz * 512
+                        posz * 512,
+                        shared_memory = shared_memory
                     )
                     x_start = posx * dx
                     x_end = (posx + 1) * dx
@@ -233,13 +331,15 @@ def full_cuda_raht(
 
     return weight, lf, np.concatenate(hf, axis=0)
 
+@profile
 def partial_cuda_raht( 
     pc,
     shape,
     max_num_iter = 4,
     posx=0,
     posy=0,
-    posz=0
+    posz=0,
+    shared_memory=True
 ):
     # in this case the block is saved in memory right away
     # block = np.zeros(shape, dtype=np.uint8)
@@ -258,21 +358,29 @@ def partial_cuda_raht(
     block_size = len(cuda_vol)
     max_num_iter = 3 * max_num_iter
     i = 0
-    while np.product(coord_scale) != np.product(cuda_vol.shape[:3]) and i < max_num_iter:
-        i += 1
-        coord_scale[axis] *= 2
-        block_x = block_size // coord_scale[0]
-        block_y = block_size // coord_scale[1]
-        block_z = block_size // coord_scale[2]
-        one_level_raht_full_gpu[(block_x, block_y), block_z](cuda_vol, axis, coord_scale)
-        axis = (axis + 1) % 3
-        cuda.synchronize()
+    if shared_memory:
+        block_x = block_size // 8
+        block_y = block_size // 8
+        block_z = block_size // 32
+        one_level_raht_full_gpu_shared_memory[(block_x, block_y, block_z), 1024](
+            cuda_vol,
+            max_num_iter // 3,
+        )
+    else:
+        while np.product(coord_scale) != np.product(cuda_vol.shape[:3]) and i < max_num_iter:
+            i += 1
+            coord_scale[axis] *= 2
+            block_x = block_size // coord_scale[0]
+            block_y = block_size // coord_scale[1]
+            block_z = block_size // coord_scale[2]
+            one_level_raht_full_gpu[(block_x, block_y), block_z](cuda_vol, axis, coord_scale)
+            axis = (axis + 1) % 3
+            cuda.synchronize()
 
-    dx = coord_scale[0]
     vol = cuda_vol.copy_to_host()
     return vol
 
-@profile
+# @profile
 def parallelized_raht(
     data: np.ndarray,
     grid_size: int,
@@ -297,7 +405,7 @@ def collapse_flattened_volume(vol, res):
     for i in range(vol.shape[-1]):
         res[tx, ty, tz, i] = vol[tx, ty, tz, 0, i] + vol[tx, ty, tz, 1, i]
 
-@profile
+# @profile
 def compute_parallel_raht(
     block: np.ndarray
 ):
@@ -338,7 +446,7 @@ def compute_parallel_raht(
 
 
 
-@profile
+# @profile
 def raht(block: np.ndarray, slightly_parallelized: bool = True) -> np.ndarray:
 
     '''

@@ -31,10 +31,17 @@ if __name__ == "__main__":
         "sequential=the whole computation is carried out sequentially"
         "partialsequential=most of the computation is carried out sequentially except for the operation to check if a region is empty"
     )
+    parser.add_argument(
+        "--shared_memory",
+        action="store_true",
+        help="If true shared memory is used in gpu block, otherwise shared memory isn't used"
+    )
+
     FLAGS = parser.parse_args()
     stop_level = FLAGS.stop_level
     grid_size = FLAGS.resolution
     execution_type = FLAGS.type
+    shared_memory = FLAGS.shared_memory
 
     gpu = cuda.get_current_device()
     max_threads_per_block = gpu.MAX_THREADS_PER_BLOCK
@@ -47,6 +54,7 @@ if __name__ == "__main__":
     print("maxGridDimX = %s" % str(gpu.MAX_GRID_DIM_X))
     print("maxGridDimY = %s" % str(gpu.MAX_GRID_DIM_Y))
     print("maxGridDimZ = %s" % str(gpu.MAX_GRID_DIM_Z))
+    print("maxSharedMemoryPerBlock = %s bytes" % str(gpu.MAX_SHARED_MEMORY_PER_BLOCK / 4))
 
     data = read_ply_files("../dataset/long.ply", only_geom=False)
     data = voxelize_PC(data, n_voxels=grid_size)
@@ -65,6 +73,11 @@ if __name__ == "__main__":
         )
         print(len(data), weight, lf, hf.shape)
     elif execution_type == "fullcuda":
-        weight, lf, hf = full_cuda_raht(data, (grid_size, grid_size, grid_size, 4), max_num_iter=stop_level)
+        weight, lf, hf = full_cuda_raht(
+            data,
+            (grid_size, grid_size, grid_size, 4),
+            max_num_iter=stop_level,
+            shared_memory=shared_memory
+        )
         print(len(data), weight, lf, hf.shape)
 
