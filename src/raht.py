@@ -286,7 +286,7 @@ def set_pc_in_array(arr, pc, posx, posy, posz):
 def get_hf_components(block, n_level):
     return block[np.where(block[..., 0] == -1)][:, 1:]
 
-# @profile
+@profile
 def full_cuda_raht(
     pc,
     shape,
@@ -380,7 +380,7 @@ def partial_cuda_raht(
     vol = cuda_vol.copy_to_host()
     return vol
 
-# @profile
+@profile
 def parallelized_raht(
     data: np.ndarray,
     grid_size: int,
@@ -405,7 +405,7 @@ def collapse_flattened_volume(vol, res):
     for i in range(vol.shape[-1]):
         res[tx, ty, tz, i] = vol[tx, ty, tz, 0, i] + vol[tx, ty, tz, 1, i]
 
-# @profile
+@profile
 def compute_parallel_raht(
     block: np.ndarray
 ):
@@ -446,7 +446,7 @@ def compute_parallel_raht(
 
 
 
-# @profile
+@profile
 def raht(block: np.ndarray, slightly_parallelized: bool = True) -> np.ndarray:
 
     '''
