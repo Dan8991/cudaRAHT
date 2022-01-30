@@ -98,25 +98,6 @@ def one_level_raht(block: np.ndarray, axis: int) -> np.ndarray:
     return np.concatenate([w, lf], axis = -1).reshape(-1, block.shape[-1]), hf
 
 @cuda.jit
-def one_level_raht_gpu(block: np.ndarray, axis: int, lf: np.ndarray, hf: np.ndarray):
-    tx = cuda.threadIdx.x
-    ty = cuda.blockIdx.x
-    bw = cuda.blockDim.x
-    pos = tx + ty * bw
-    if pos < block.shape[0]:
-        w1 = block[pos, 0, 0]
-        w2 = block[pos, 1, 0]
-        sw1 = w1 ** 0.5
-        sw2 = w2 ** 0.5
-        for i in range(3):
-            l1 = block[pos, 0, i + 1]
-            l2 = block[pos, 1, i + 1]
-            hf[pos, i] = (- sw2 * l1 + sw1 * l2)/(sw1 + sw2)
-            lf[pos, i + 1] = (sw1 * l1 + sw2 * l2)/(sw1 + sw2)
-        lf[pos, 0] = w1 + w2
-
-
-@cuda.jit
 def one_level_raht_full_gpu(
     block: np.ndarray,
     axis: int,
@@ -390,21 +371,6 @@ def parallelized_raht(
     block[tuple(data[:, :3].T)] = np.concatenate([np.ones((len(data), 1)), data[:, 3:]], axis = 1)
     return compute_parallel_raht(block)
 
-@cuda.jit
-def collapse_flattened_volume(vol, res):
-    '''
-    parallelizes the collapsing of the weights
-    the number of threads is equal to the number of samples in the x axis
-    the number of blocks is shape_y * shape_z
-    Parameters:
-        vol (np.ndarray): grid representation of the PC
-    '''
-    tz = cuda.threadIdx.x
-    tx = cuda.blockIdx.x
-    ty = cuda.blockIdx.y
-    for i in range(vol.shape[-1]):
-        res[tx, ty, tz, i] = vol[tx, ty, tz, 0, i] + vol[tx, ty, tz, 1, i]
-
 @profile
 def compute_parallel_raht(
     block: np.ndarray
@@ -503,48 +469,3 @@ def _raht(block, axis, slightly_parallelized = True):
         hf.append((- sw2 * l1 + sw1 * l2)/(sw1 + sw2))
         new_lf = (sw1 * l1 + sw2 * l2)/(sw1 + sw2)
         return w1 + w2, new_lf, hf
-
-def one_level_inverse_raht(
-    coeffs: np.ndarray,
-    geometry: np.ndarray
-) -> np.ndarray:
-
-    '''
-    performs the invers operation of one_level_raht
-    Parameters:
-        coeffs: array of raht coefficients
-        geometry: geometry information used to compute the coefficients
-    Returns:
-        the original blocks
-    '''
-
-    lf = coeffs[:, :1].reshape((-1, 1, 1, 1, 3))
-    for i in range(3):
-
-        w = geometry
-        for j in range(3 - i - 1):
-            w = np.sum(w, axis = j + 1, keepdims=True)
-
-        w_sqrt = np.sqrt(w) 
-        w_sqrt_inv = np.concatenate([
-            - w_sqrt[(slice(None),) * (3-i) + (slice(1, 2),)],
-            w_sqrt[(slice(None),) * (3-i) + (slice(0, 1),)],
-        ], axis = 3 - i)
-        w_coeffs = np.concatenate([w_sqrt, w_sqrt_inv], axis=-1)
-        w_coeffs = np.swapaxes(w_coeffs, 3-i, -2).swapaxes(-1, -2)
-        zero_mat = np.abs(w_coeffs).reshape(w_coeffs.shape[:-2] + (4,))
-        zero_mat = np.where(zero_mat.sum(axis=-1) == 0)
-        w_coeffs[zero_mat] = np.eye(2).reshape((1, 1, 1, 2, 2))
-        w_coeffs = np.linalg.inv(w_coeffs)
-        w_coeffs[zero_mat] = 0
-        
-        w_div = np.sum(w_sqrt, axis = 3-i, keepdims=True)
-
-        hf = coeffs[:, 2**i:2**(i+1)] 
-        mixed_coeffs = np.concatenate([
-            lf,
-            hf.reshape(lf.shape) 
-        ], axis=3-i).swapaxes(3-i, -2)
-        lf = (w_coeffs @ mixed_coeffs).swapaxes(3-i, -2) * w_div
-
-    return lf
