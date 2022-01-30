@@ -312,7 +312,6 @@ def full_cuda_raht(
 
     return weight, lf, np.concatenate(hf, axis=0)
 
-@profile
 def partial_cuda_raht( 
     pc,
     shape,
@@ -391,7 +390,8 @@ def compute_parallel_raht(
         nb = (1,) * axis + (2,) + (1,) * (2 - axis) 
         flattened_block = flatten_cubes(block, nb)
         new_lf_idxs = np.where(np.min(flattened_block[..., 0], axis=-1) > 0)
-        block = np.sum(flattened_block, axis=-2).astype(np.float32)
+        block = np.sum(flattened_block, axis=-2)
+        block = block.astype(np.float32)
         if len(new_lf_idxs[0]) > 0:
 
             blocks_to_process = flattened_block[new_lf_idxs].reshape(
