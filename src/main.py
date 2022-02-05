@@ -56,22 +56,31 @@ if __name__ == "__main__":
     print("maxGridDimZ = %s" % str(gpu.MAX_GRID_DIM_Z))
     print("maxSharedMemoryPerBlock = %s bytes" % str(gpu.MAX_SHARED_MEMORY_PER_BLOCK / 4))
 
+    # reading the pc
     data = read_ply_files("../dataset/long.ply", only_geom=False)
+    # quantizing the pc to obtain the correct resolution
     data = voxelize_PC(data, n_voxels=grid_size)
     #removing duplicate points by averaging the color
     df = pd.DataFrame(data, columns=["x", "y", "z", "r", "g", "b"])
     data = df.groupby(["x", "y", "z"], as_index=False).mean().to_numpy().astype(np.int32)
+
+    #executes the sequential code
     if execution_type == "sequential" or execution_type == "partialsequential":
-        weight, lf, hf = raht(res, slightly_parallelized=execution_type == "partialsequential")
-        print("time elapsed:", time() - now)
+        weight, lf, hf = raht(
+            data,
+            grid_size,
+            slightly_parallelized=execution_type == "partialsequential"
+        )
         hf = np.concatenate(hf, axis=0).reshape(-1, 3)
-        print(np.sum(res[..., 0]), weight, lf, hf.shape)
+        print(len(data), weight, lf, hf.shape)
+    #executes the code optimized with numpy
     elif execution_type == "numpy":
         weight, lf, hf = parallelized_raht(
             data,
             grid_size = grid_size
         )
         print(len(data), weight, lf, hf.shape)
+    #executes the code in cuda
     elif execution_type == "fullcuda":
         weight, lf, hf = full_cuda_raht(
             data,

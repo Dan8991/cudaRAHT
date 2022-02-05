@@ -1,6 +1,7 @@
 import numpy as np
 from numba import cuda, vectorize, float32
 
+#function needed to reshape the cube 
 def flatten_cubes(vol, nb):
     '''
     flattens subcubes in cube of size (nbx, nby, nbz) i.e. values from the same
@@ -33,8 +34,6 @@ def flatten_cubes(vol, nb):
     return vol
 
 # reshapes vol so it goes back to how it was before flatten_cubes
-
-
 def unflatten_cubes(vol, nb):
     '''
     Inverse operation of flatten cubes
@@ -104,6 +103,13 @@ def one_level_raht_full_gpu(
     axis_mult: list
 ):
 
+    '''
+    Computes one level of raht in gpu
+    Parameters:
+        block (array): input data
+        axis (int): axis along which to perform the operation
+        axis_mult (tuple): tuple telling how much to skip to obtain the next lf coefficient
+    '''
     dx = axis_mult[0]
     dy = axis_mult[1]
     dz = axis_mult[2]
@@ -148,6 +154,13 @@ def one_level_raht_full_gpu_shared_memory(
     n_levels: int,
 ):
 
+    '''
+    Computes one level of raht in gpu using shared memory
+    Parameters:
+        block (array): input data
+        n_levels: (int): number of levels processed before stopping
+    '''
+    # defining the shared memory for the block
     shared_arr = cuda.shared.array(shape=(8, 8, 32, 4), dtype=float32)
     cuda.syncthreads()
     curr_level = 1
@@ -167,6 +180,7 @@ def one_level_raht_full_gpu_shared_memory(
     ty2 = ty
     tz2 = tz
 
+    #first step, here after processing the data is saved in shared memory
     w1 = block[x_start + tx, y_start + ty, z_start + tz, 0]
     w2 = block[x_start + tx2, y_start + ty2, z_start + tz2, 0]
     sw1 = w1 ** 0.5
@@ -188,6 +202,7 @@ def one_level_raht_full_gpu_shared_memory(
     cuda.syncthreads()
 
 
+    # intermediate steps, here the data is processed in shared_memory
     for step in range(1, n_levels*3):
         axis = step % 3
         if axis == 0:
@@ -230,6 +245,7 @@ def one_level_raht_full_gpu_shared_memory(
             shared_arr[tx, ty, tz, 0] = w1 + w2
         cuda.syncthreads()
 
+    # final step used to move the data from shared memory to the vram
     tz = threadIdx % 32
     ty = (threadIdx // 32) % 8
     tx = ((threadIdx // 256) % 4) * 2
@@ -240,6 +256,11 @@ def one_level_raht_full_gpu_shared_memory(
 
 @cuda.jit
 def initialize_empty_array(arr):
+    '''
+    sets all the parameters in arr to 0
+    parameters:
+        arr (np.ndarray): input array
+    '''
     tz = cuda.threadIdx.x // 2
     tx = cuda.blockIdx.x * 2 + (cuda.threadIdx.x % 2)
     ty = cuda.blockIdx.y
@@ -248,6 +269,16 @@ def initialize_empty_array(arr):
 
 @cuda.jit
 def set_pc_in_array(arr, pc, posx, posy, posz):
+
+    '''
+    given a pc and an empty grid it initializes the values in the grid accordingly
+    Parameters:
+        arr (np.ndarray): grid
+        pc (np.ndarray): point cloud data
+        posx, posy, posz (ints): thresholds used when the grid covers only part of the pc
+                                 i.e. when the whole grid doesn't fit in memory
+    '''
+
     tx = cuda.threadIdx.x
     ty = cuda.blockIdx.x
     bw = cuda.blockDim.x
@@ -264,7 +295,12 @@ def set_pc_in_array(arr, pc, posx, posy, posz):
                 arr[x, y, z, i + 1] = float(pc[pos, i + 3])
             arr[x, y, z, 0] = 1.0
 
-def get_hf_components(block, n_level):
+def get_hf_components(block):
+    '''
+    function used to extract the hf components from the block processed by the cuda function
+    Parameters:
+        block (np.ndarray): processed grid
+    '''
     return block[np.where(block[..., 0] == -1)][:, 1:]
 
 @profile
@@ -274,6 +310,15 @@ def full_cuda_raht(
     max_num_iter = 3,
     shared_memory = True
 ):
+    '''
+    function used to perform raht using cuda if the resolution is the highest possible then 
+    the computation is split in 8 independent parts
+    Parameters:
+        pc (np.array): point cloud data
+        shape (tuple): shape of the grid
+        max_num_iter (int): maximum number of levels processed in GPU
+        shared_memory (bool): wether to use shared memory or not
+    '''
     hf = []
     if shape[0] < 1024:
         vol = partial_cuda_raht(pc, shape, max_num_iter, shared_memory=shared_memory)
@@ -321,6 +366,16 @@ def partial_cuda_raht(
     posz=0,
     shared_memory=True
 ):
+    '''
+    function used to compute raht on a block
+    Parameters:
+        pc (np.array): point cloud
+        shape (tuple): shape of the grid
+        max_num_iter (int): maximum number of levels collapsed with raht
+        posx, posy, posz (ints): used when the grid only covers part of the network and are the 
+                                 starting points
+        shared_memory (bool): tells wether shared memory should be used or not
+    '''
     # in this case the block is saved in memory right away
     # block = np.zeros(shape, dtype=np.uint8)
     # block[tuple(pc[:, :3].T)] = np.concatenate([np.ones((len(pc), 1)), pc[:, 3:]], axis = 1)
@@ -365,7 +420,14 @@ def parallelized_raht(
     data: np.ndarray,
     grid_size: int,
 ) -> np.ndarray:
+    '''
+    numpy implementation of raht
+    Parameters:
+        data (np.array): point cloud data
+        grid_size (int): size of one of the dimensions of the grid
+    '''
     # repeat until the shape of the block becomes (1, 1, 1, c)
+    #building the grid
     block = np.zeros((grid_size, grid_size, grid_size, 4), dtype=np.uint8)
     block[tuple(data[:, :3].T)] = np.concatenate([np.ones((len(data), 1)), data[:, 3:]], axis = 1)
     return compute_parallel_raht(block)
@@ -375,7 +437,7 @@ def compute_parallel_raht(
     block: np.ndarray
 ):
     '''
-    performs a slightly different raht transform
+    performs the raht transform using numpy
     Parameters:
         block: np array of size of nxnxnx4 to be transformed where the first channel represent
                geometric  information while the remaining ones represent color
@@ -396,8 +458,10 @@ def compute_parallel_raht(
 
             blocks_to_process = flattened_block[new_lf_idxs].reshape(
                 (-1, *nb, channels)
-            ).astype(np.float32)
+            )
             #needed to save some ram memory
+            flattened_block = None
+            blocks_to_process = blocks_to_process.astype(np.float32)
 
             lf, hf = one_level_raht(
                 blocks_to_process, 
@@ -413,19 +477,24 @@ def compute_parallel_raht(
 
 
 @profile
-def raht(block: np.ndarray, slightly_parallelized: bool = True) -> np.ndarray:
+def raht(data: np.ndarray, grid_size, slightly_parallelized: bool = True) -> np.ndarray:
 
     '''
-    performs a slightly different raht transform
+    performs raht in sequential manner
     Parameters:
         block: np array of size of nxnxnx4 to be transformed where the first channel represent
                geometric  information while the remaining ones represent color
     Returns:
         the weight, and the hf and lf transformed coefficients 
     '''
+    block = np.zeros((grid_size, grid_size, grid_size, 4), dtype=np.float32)
+    block[tuple(data[:, :3].T)] = np.concatenate([np.ones((len(data), 1)), data[:, 3:]], axis = 1)
     return _raht(block, axis = 2, slightly_parallelized = slightly_parallelized)
 
 def is_empty(block):
+    '''
+    Checks if block is empty (i.e. contains no geometry)
+    '''
     x, y, z = block.shape[:3]
     for i in range(x):
         for j in range(y):
@@ -435,6 +504,9 @@ def is_empty(block):
     return True
 
 def _raht(block, axis, slightly_parallelized = True):
+    '''
+    computes raht sequentially
+    '''
 
     if block.shape == (1, 1, 1, 4):
         return block[0, 0, 0, 0], block[0, 0, 0, 1:], None
