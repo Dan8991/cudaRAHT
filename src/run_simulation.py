@@ -3,7 +3,7 @@ import pickle
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
-n_tests=30
+n_tests=10
 modes = ["fullcuda", "numpy", "sequential"]
 mapping = {
     "fullcuda": 0,
@@ -33,8 +33,10 @@ for res_exp in tqdm(range(5, 11)):
 for mode in modes:
     plt.plot(range(5, 5 + len(times[mode])), times[mode], label=mode)
 plt.ylabel("time (s)")
+plt.yscale("log")
 plt.xlabel("resolution exponent")
 plt.legend()
+plt.savefig("comparison.pdf")
 plt.show()
 
 # from the 1024 resolution trying to find out how much the stop level influences the result
@@ -53,8 +55,10 @@ for stop_level in tqdm(range(1, 9)):
         total_time += run_time
     times["fullcuda"].append(total_time/n_tests/10**6)
 
+plt.figure()
 plt.plot(range(3, 27, 3), times["fullcuda"])
 plt.ylabel("time (s)")
 plt.xlabel("# of collapse operations")
+plt.savefig("level.pdf")
 plt.show()
 
