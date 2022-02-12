@@ -3,7 +3,7 @@ import pickle
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
-n_tests=1
+n_tests=30
 modes = ["fullcuda", "numpy", "sequential"]
 mapping = {
     "fullcuda": 0,
