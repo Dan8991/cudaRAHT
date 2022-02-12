@@ -345,7 +345,7 @@ def full_cuda_raht(
                     z_start = posz * dx
                     z_end = (posz + 1) * dx
                     step = 2 ** max_num_iter
-                    hf.append(get_hf_components(vol_temp, max_num_iter))
+                    hf.append(get_hf_components(vol_temp))
                     vol[x_start:x_end, y_start:y_end, z_start:z_end] = vol_temp[
                         ::step,
                         ::step,
